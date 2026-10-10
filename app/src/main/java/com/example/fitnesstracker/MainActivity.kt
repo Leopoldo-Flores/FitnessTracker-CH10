@@ -16,6 +16,7 @@ import com.example.fitnesstracker.ui.theme.FitnessTrackerTheme
 // Class 1
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -28,6 +29,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlin.math.sqrt
+// Class 2
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Button
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.AlignmentLine
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.graphics.blue
+import com.github.mikephil.charting.charts.BarChart
+import com.github.mikephil.charting.data.BarData
+import com.github.mikephil.charting.data.BarDataSet
+import com.github.mikephil.charting.data.BarEntry
+import com.github.mikephil.charting.components.XAxis
 
 @SuppressLint("SetTextI18n")
 class MainActivity : ComponentActivity(), SensorEventListener{
@@ -52,6 +67,13 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     private var baselineY = 0f
     private var baselineZ = 9.8f
 
+    // MPAndroidChart is a View not a composable
+    private lateinit var barChart: BarChart
+
+    // Sample data for the chart - index 2 is 0f to create a visible gap
+    private val hourlySteps = floatArrayOf(1000f, 1200f, 0f, 800f)
+
+
     companion object {
         private const val STATIONARY_THRESHOLD = 2.0f
         private const val WALKING_THRESHOLD = 12.0f
@@ -67,7 +89,9 @@ class MainActivity : ComponentActivity(), SensorEventListener{
                     FitnessTrackerScreen(
                         motionText = motionText,
                         gyroText = gyroText,
-                        directionText = directionText
+                        directionText = directionText,
+                        onRefreshCharClick = { setupChart() },
+                        onChartCreated = { chart -> barChart = chart; setupChart() }
                     )
                 }
             }
@@ -141,6 +165,24 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         else               -> "W" // 225-314
     }
 
+    private fun setupChart() { // one BarEntry per hour - x=hour index, y = step count
+        val entries = hourlySteps.mapIndexed { index, value -> BarEntry(index.toFloat(), value) }
+        val dataSet = BarDataSet(entries, "Steps").apply {
+            color = Color.BLUE.toInt()
+            valueTextSize = 10f
+        } // configure chart appearance
+        barChart.apply {
+            data = BarData(dataSet)
+            description.text = "Step Count per Hour"
+            xAxis.position = XAxis.XAxisPosition.BOTTOM // labels below bars
+            xAxis.granularity = 1f                      // one label per bar
+            axisRight.isEnabled = false                 // hide duplicate right Y axis
+            setFitBars(true)             // bars fill full chart width
+            animateY(800)  // bars grow upward over 800ms on load
+            invalidate()                 // force redraw - required after every data change
+        }
+    }
+
 
 
     private fun classifyMotion(magnitude: Float): String {
@@ -153,7 +195,8 @@ class MainActivity : ComponentActivity(), SensorEventListener{
 }
 
 @Composable
-fun FitnessTrackerScreen(motionText: String, gyroText: String, directionText: String) {
+fun FitnessTrackerScreen(motionText: String, gyroText: String, directionText: String,
+                         onRefreshCharClick: () -> Unit, onChartCreated: (BarChart) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -163,6 +206,19 @@ fun FitnessTrackerScreen(motionText: String, gyroText: String, directionText: St
         Text(text = motionText, fontSize = 20.sp, modifier = Modifier.padding(bottom = 20.dp))
         Text(text = gyroText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
         Text(text = directionText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
+
+        AndroidView( // blank until setupChart() is implemented. AndroidView bridges a legacy View into Compose
+            factory = { ctx -> BarChart(ctx).also(onChartCreated) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+                .padding(bottom = 16.dp)
+        )
+
+        Button(onClick = onRefreshCharClick, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Text("Refresh Chart")
+        }
+
     }
 }
 
