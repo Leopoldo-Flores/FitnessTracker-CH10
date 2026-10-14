@@ -43,6 +43,15 @@ import com.github.mikephil.charting.data.BarData
 import com.github.mikephil.charting.data.BarDataSet
 import com.github.mikephil.charting.data.BarEntry
 import com.github.mikephil.charting.components.XAxis
+// Class 3
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
+import androidx.compose.material3.ButtonDefaults
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+
 
 @SuppressLint("SetTextI18n")
 class MainActivity : ComponentActivity(), SensorEventListener{
@@ -73,6 +82,24 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     // Sample data for the chart - index 2 is 0f to create a visible gap
     private val hourlySteps = floatArrayOf(1000f, 1200f, 0f, 800f)
 
+    // Hardware step counter
+    private var stepCounterSensor: Sensor? = null // demo mode for emulator
+
+    // Step tracking
+    private var sessionStepCount = 0
+    private var initialStepCount = -1 // anchor point
+
+    // health metric display state
+    private var stepCountText by mutableStateOf("Steps: 0")
+    private var caloriesText by mutableStateOf("Calories: 0.0 kcal")
+    private var distanceText by mutableStateOf("Distance: 0.0 km")
+    private val ACTIVITY_PERMISSION_CODE = 100
+
+    // Demo Mode - Compose state so the button recomposes when it flips
+    private var isDemoMode by mutableStateOf(false)
+    private val demoHandler = Handler(Looper.getMainLooper())
+
+
 
     companion object {
         private const val STATIONARY_THRESHOLD = 2.0f
@@ -82,6 +109,7 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         initSensors()
+        requestActivityPermission()
 
         setContent {
             FitnessTrackerTheme {
@@ -90,8 +118,13 @@ class MainActivity : ComponentActivity(), SensorEventListener{
                         motionText = motionText,
                         gyroText = gyroText,
                         directionText = directionText,
-                        onRefreshCharClick = { setupChart() },
-                        onChartCreated = { chart -> barChart = chart; setupChart() }
+                        onRefreshChartClick = { setupChart() },
+                        onChartCreated = { chart -> barChart = chart; setupChart() },
+                        stepCountText = stepCountText,
+                        caloriesText = caloriesText,
+                        distanceText = distanceText,
+                        isDemoMode = isDemoMode,
+                        onDemoModeClick = { toggleDemoMode() }
                     )
                 }
             }
@@ -103,6 +136,7 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         accelerometer?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
         gyroscope?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
         magnetometer?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        stepCounterSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)}
     }
 
     override fun onPause() {
@@ -115,6 +149,13 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+    }
+
+    private fun requestActivityPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED)
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACTIVITY_RECOGNITION), ACTIVITY_PERMISSION_CODE)
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -127,6 +168,9 @@ class MainActivity : ComponentActivity(), SensorEventListener{
             //   - TYPE_GYROSCOPE: pass event.values to handleGyroscope()
             //   - TYPE_MAGNETIC_FIELD: save a CLONE of event.values into magnetValues
             //     (same reason as the accelerometer case), then call updateCompass()
+            Sensor.TYPE_STEP_COUNTER -> {
+                handleStepCounter(event.values[0].toInt())
+            }
         }
     }
 
@@ -135,7 +179,7 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     private fun handleAccelerometer(values: FloatArray) {
         val x = values[0] - baselineX
         val y = values[1] - baselineY
-        val z = values[2] - baselineY
+        val z = values[2] - baselineZ
         val magnitude = sqrt(x * x + y * y + z * z)
         motionText = "Motion: ${classifyMotion(magnitude)}"
     }
@@ -183,6 +227,83 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         }
     }
 
+    private fun handleStepCounter(totalSteps: Int) {
+        if (initialStepCount == -1) {
+            initialStepCount = totalSteps
+        }
+        sessionStepCount = totalSteps - initialStepCount
+        updateHealthMetrics()
+        updateChartWithSteps()
+    }
+
+    private fun updateHealthMetrics() {
+        stepCountText = "Steps: $sessionStepCount"
+        caloriesText =  "Calories: ${"%.1f".format(calculateCalories(sessionStepCount))} kcal"
+        distanceText = "Distance: ${"%.2f".format(calculateDistance(sessionStepCount))} km"
+    }
+    // ASSIGNMENT 3
+    //   calculateCalories: return the total calories burned for `steps`,
+    //   using the per-step constant in the companion object.
+    //   calculateDistance: return the distance in KILOMETERS for `steps`,
+    //   using the stride-length constant. The constant is in metres, so a
+    //   conversion is needed. See Hour 1: Health Metric Formulas.
+
+    private fun calculateCalories(steps: Int): Float = 0f
+
+    private fun calculateDistance(steps: Int): Float = 0f
+
+
+    private fun updateChartWithSteps() {
+        val updatedSteps = floatArrayOf(
+            sessionStepCount * 0.1f,
+            sessionStepCount * 0.2f,
+            sessionStepCount * 0.3f,
+            sessionStepCount * 0.4f
+        )
+
+        val entries = updatedSteps.mapIndexed { i, v -> BarEntry(i.toFloat(), v) }
+        val dataSet = BarDataSet(entries, "Steps").apply {
+            color = Color.CYAN.toInt()
+            valueTextSize = 10f
+        }
+        barChart.apply {
+            data = BarData(dataSet)
+            invalidate()
+        }
+    }
+
+    private fun toggleDemoMode() {
+        isDemoMode = !isDemoMode
+        if (isDemoMode) {
+            demoHandler.post(demoRunnable)
+        } else {
+            demoHandler.removeCallbacks(demoRunnable)
+        }
+    }
+
+    private val demoRunnable = object : Runnable {
+        private var compassAngle = 0f // tracks simulated heading independently
+        override fun run() {
+            if (!isDemoMode) return // safety check
+
+            // sine wave walking simulation - feeds into handleAccelerometer(), same
+            // method real sensor events call. the app cant tell the difference.
+            val t = System.currentTimeMillis()
+            handleAccelerometer(floatArrayOf(
+                (Math.sin(t / 200.0) * 3).toFloat(),
+                (Math.cos(t/300.0) * 2).toFloat(),
+                9.8f + (Math.sin(t / 150.0) *4).toFloat()
+            ))
+
+            // Rotate compass 5 deg per tick so direction cycles through
+            compassAngle = (compassAngle + 5f) % 360f
+            directionText = "Direction: ${getDirection(compassAngle)}"
+            sessionStepCount += 2 // simulate 4 steps/second at 500 ms interval
+            updateHealthMetrics()
+            updateChartWithSteps()
+            demoHandler.postDelayed(this, 500)
+        }
+    }
 
 
     private fun classifyMotion(magnitude: Float): String {
@@ -195,8 +316,18 @@ class MainActivity : ComponentActivity(), SensorEventListener{
 }
 
 @Composable
-fun FitnessTrackerScreen(motionText: String, gyroText: String, directionText: String,
-                         onRefreshCharClick: () -> Unit, onChartCreated: (BarChart) -> Unit) {
+fun FitnessTrackerScreen(
+    motionText: String,
+    gyroText: String,
+    directionText: String,
+    onRefreshChartClick: () -> Unit,
+    onChartCreated: (BarChart) -> Unit,
+    stepCountText: String,
+    caloriesText: String,
+    distanceText: String,
+    isDemoMode: Boolean,
+    onDemoModeClick: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -207,7 +338,11 @@ fun FitnessTrackerScreen(motionText: String, gyroText: String, directionText: St
         Text(text = gyroText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
         Text(text = directionText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
 
-        AndroidView( // blank until setupChart() is implemented. AndroidView bridges a legacy View into Compose
+        Text(text = stepCountText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Text(text = caloriesText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Text(text = distanceText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
+
+        AndroidView(
             factory = { ctx -> BarChart(ctx).also(onChartCreated) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -215,10 +350,19 @@ fun FitnessTrackerScreen(motionText: String, gyroText: String, directionText: St
                 .padding(bottom = 16.dp)
         )
 
-        Button(onClick = onRefreshCharClick, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            Text("Refresh Chart")
+        Button(onClick = onRefreshChartClick, modifier = Modifier.padding(bottom = 20.dp).align(Alignment.CenterHorizontally)) {
+            Text("Refresh Charts")
         }
 
+        Button(
+            onClick = onDemoModeClick,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isDemoMode) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            ),
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text(if (isDemoMode) "⏹  Stop Demo" else "▶  Demo Mode")
+        }
     }
 }
 
