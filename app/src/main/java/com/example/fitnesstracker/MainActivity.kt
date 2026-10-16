@@ -44,7 +44,6 @@ import com.github.mikephil.charting.data.BarDataSet
 import com.github.mikephil.charting.data.BarEntry
 import com.github.mikephil.charting.components.XAxis
 // Class 3
-// ---- Add these new imports for Class 3 ----
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -52,6 +51,18 @@ import android.os.Looper
 import androidx.compose.material3.ButtonDefaults
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+// class 4
+import android.widget.Toast
+import androidx.compose.runtime.remember
+import com.example.fitnesstracker.data.AppDatabase
+import com.example.fitnesstracker.data.SessionEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @SuppressLint("SetTextI18n")
 class MainActivity : ComponentActivity(), SensorEventListener{
@@ -93,12 +104,21 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     private var stepCountText by mutableStateOf("Steps: 0")
     private var caloriesText by mutableStateOf("Calories: 0.0 kcal")
     private var distanceText by mutableStateOf("Distance: 0.0 km")
-    private val ACTIVITY_PERMISSION_CODE = 100
 
     // Demo Mode - Compose state so the button recomposes when it flips
     private var isDemoMode by mutableStateOf(false)
     private val demoHandler = Handler(Looper.getMainLooper())
 
+    // ROOM
+    private lateinit var database: AppDatabase
+    private var sessionHistory by mutableStateOf<List<SessionEntity>>(emptyList())
+
+    // Calibration
+    private var isCalibrating = false
+    private val calibrationSamples = mutableListOf<FloatArray>()
+
+    // accuracy warning
+    private var accuracyText by mutableStateOf("")
 
 
     companion object {
@@ -115,6 +135,10 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         initSensors()
         requestActivityPermission()
 
+        database = AppDatabase.getInstance(this)
+        loadHistory()
+
+
         setContent {
             FitnessTrackerTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -128,7 +152,13 @@ class MainActivity : ComponentActivity(), SensorEventListener{
                         caloriesText = caloriesText,
                         distanceText = distanceText,
                         isDemoMode = isDemoMode,
-                        onDemoModeClick = { toggleDemoMode() }
+                        onDemoModeClick = { toggleDemoMode() },
+                        accuracyText = accuracyText,
+                        isCalibrating = isCalibrating,
+                        onCalibrateClick = { startCalibration() },
+                        sessionHistory = sessionHistory,
+                        onSaveSessionClick = { saveSession() }
+
                     )
                 }
             }
@@ -146,6 +176,11 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     override fun onPause() {
         super.onPause()
         sensorManager.unregisterListener(this)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        sensorManager.unregisterListener(this) // safety net - onPause already dose this
     }
 
     private fun initSensors() {
@@ -189,7 +224,12 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) { }
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+        accuracyText = if (accuracy == SensorManager.SENSOR_STATUS_UNRELIABLE ||
+            accuracy == SensorManager.SENSOR_STATUS_ACCURACY_LOW)
+            "${sensor.name} accuracy LOW - please recalibrate"
+        else ""
+    }
 
     private fun handleAccelerometer(values: FloatArray) {
         val x = values[0] - baselineX
@@ -197,6 +237,10 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         val z = values[2] - baselineZ
         val magnitude = sqrt(x * x + y * y + z * z)
         motionText = "Motion: ${classifyMotion(magnitude)}"
+        if (isCalibrating) {
+            calibrationSamples.add(floatArrayOf(values[0], values[1], values[2]))
+            if (calibrationSamples.size >= 20) finishCalibration()
+        }
     }
 
     // values[] are rotation rates in radians/second -- %.2f keeps 2 decimal places
@@ -333,6 +377,49 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     }
 
 
+    private fun loadHistory() {
+        CoroutineScope(Dispatchers.IO).launch {
+            val sessions = database.sessionDao().getRecentSessions()
+            withContext(Dispatchers.Main) { sessionHistory = sessions }
+        }
+    }
+
+    private fun startCalibration() {
+        calibrationSamples.clear()  // discard any previous samples
+        isCalibrating = true        // handleAccelerometer() checks this flag; also disables the button
+    }
+
+    private fun finishCalibration() {
+        isCalibrating = false
+        baselineX = calibrationSamples.map { it[0] }.average().toFloat()
+        baselineY = calibrationSamples.map { it[1] }.average().toFloat()
+        baselineZ = calibrationSamples.map { it[2] }.average().toFloat()
+        calibrationSamples.clear()
+    }
+
+    private fun saveSession() {
+        // bail out if there's nothing worth saving
+        if (sessionStepCount == 0) {
+            Toast.makeText(this, "No steps - please walk around", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val session = SessionEntity(
+            timestamp = System.currentTimeMillis(), // right now, in milliseconds
+            steps = sessionStepCount,               // current step count for this session
+            calories = calculateCalories(sessionStepCount),
+            distanceKm = calculateDistance(sessionStepCount)
+        )
+        CoroutineScope(Dispatchers.IO).launch {
+
+        }
+        // ASSIGNMENT 4 -- Implement this! See Hour 3 for the full spec.
+        //   Launch a coroutine on Dispatchers.IO and insert `session` into the
+        //   database via database.sessionDao(). Database calls are not allowed
+        //   on the main thread. Once the insert finishes, switch back to
+        //   Dispatchers.Main (withContext) to show a confirmation Toast and
+        //   call loadHistory() again so the new session appears in the list.
+    }
+
     private fun classifyMotion(magnitude: Float): String {
         return when {
             magnitude < STATIONARY_THRESHOLD -> "Stationary"
@@ -353,8 +440,14 @@ fun FitnessTrackerScreen(
     caloriesText: String,
     distanceText: String,
     isDemoMode: Boolean,
-    onDemoModeClick: () -> Unit
+    onDemoModeClick: () -> Unit,
+    accuracyText: String,
+    isCalibrating: Boolean,
+    onCalibrateClick: () -> Unit,
+    sessionHistory:  List<SessionEntity>,
+    onSaveSessionClick: () -> Unit
 ) {
+    val fmt = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -365,9 +458,15 @@ fun FitnessTrackerScreen(
         Text(text = gyroText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
         Text(text = directionText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
 
-        Text(text = stepCountText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
-        Text(text = caloriesText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
-        Text(text = distanceText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
+        // Accuracy warning - hidden until onAccuracyChanged fires
+        if (accuracyText.isNotEmpty()) {
+            Text(text = accuracyText, fontSize = 14.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        // Calibration button
+        Button(onClick = onCalibrateClick, enabled = !isCalibrating, modifier = Modifier.padding(bottom = 20.dp)) {
+            Text(if (isCalibrating) "Calibrating..." else "Calibrate")
+        }
 
         AndroidView(
             factory = { ctx -> BarChart(ctx).also(onChartCreated) },
@@ -381,14 +480,36 @@ fun FitnessTrackerScreen(
             Text("Refresh Charts")
         }
 
+        // health metrics
+        Text(text = stepCountText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Text(text = caloriesText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Text(text = distanceText, fontSize = 16.sp, modifier = Modifier.padding(bottom = 20.dp))
+
         Button(
             onClick = onDemoModeClick,
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (isDemoMode) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             ),
-            modifier = Modifier.align(Alignment.CenterHorizontally)
+            modifier = Modifier.padding(bottom = 20.dp).align(Alignment.CenterHorizontally)
         ) {
             Text(if (isDemoMode) "⏹  Stop Demo" else "▶  Demo Mode")
+        }
+
+        // session history - save session bottom + list from Room
+        Button(onClick = onSaveSessionClick, modifier = Modifier.padding(bottom = 20.dp).align(Alignment.CenterHorizontally)){
+            Text("Save Session")
+        }
+        Text(text = "Session History", fontSize = 13.sp, modifier = Modifier.padding(bottom = 12.dp))
+        if (sessionHistory.isEmpty()) {
+            Text("No sessions saved yet. Run Demo Mode then tap Save Session.", fontSize = 14.sp)
+        } else {
+            sessionHistory.forEach { s ->
+                Text(
+                    text = "${fmt.format(Date(s.timestamp))} | ${s.steps} steps | ${"%.1f".format(s.calories)} kcal|${"%.2f".format(s.distanceKm)} km",
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            }
         }
     }
 }
