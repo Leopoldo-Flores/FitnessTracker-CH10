@@ -212,7 +212,7 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     private fun setupChart() { // one BarEntry per hour - x=hour index, y = step count
         val entries = hourlySteps.mapIndexed { index, value -> BarEntry(index.toFloat(), value) }
         val dataSet = BarDataSet(entries, "Steps").apply {
-            color = Color.BLUE.toInt()
+            color = Color.BLUE.toArgb()
             valueTextSize = 10f
         } // configure chart appearance
         barChart.apply {
@@ -263,7 +263,7 @@ class MainActivity : ComponentActivity(), SensorEventListener{
 
         val entries = updatedSteps.mapIndexed { i, v -> BarEntry(i.toFloat(), v) }
         val dataSet = BarDataSet(entries, "Steps").apply {
-            color = Color.CYAN.toInt()
+            color = android.graphics.Color.CYAN
             valueTextSize = 10f
         }
         barChart.apply {
