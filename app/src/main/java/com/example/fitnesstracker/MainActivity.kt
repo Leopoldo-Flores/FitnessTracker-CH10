@@ -44,6 +44,7 @@ import com.github.mikephil.charting.data.BarDataSet
 import com.github.mikephil.charting.data.BarEntry
 import com.github.mikephil.charting.components.XAxis
 // Class 3
+// ---- Add these new imports for Class 3 ----
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -51,7 +52,6 @@ import android.os.Looper
 import androidx.compose.material3.ButtonDefaults
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-
 
 @SuppressLint("SetTextI18n")
 class MainActivity : ComponentActivity(), SensorEventListener{
@@ -104,6 +104,10 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     companion object {
         private const val STATIONARY_THRESHOLD = 2.0f
         private const val WALKING_THRESHOLD = 12.0f
+        //
+        private const val CALORIES_PER_STEP = 0.04f   // kcal burned per step (adult average) -- Assignment 3 uses this
+        private const val STRIDE_LENGTH_M = 0.762f    // metres per step (adult average) -- Assignment 3 uses this
+        private const val ACTIVITY_PERMISSION_CODE = 100  // identifies the permission request
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -168,6 +172,17 @@ class MainActivity : ComponentActivity(), SensorEventListener{
             //   - TYPE_GYROSCOPE: pass event.values to handleGyroscope()
             //   - TYPE_MAGNETIC_FIELD: save a CLONE of event.values into magnetValues
             //     (same reason as the accelerometer case), then call updateCompass()
+
+            // Assignment 1 -- gyroscope passes raw rad/s values to the display handler
+            Sensor.TYPE_GYROSCOPE -> {
+                handleGyroscope(event.values)
+            }
+
+            // Assignment 1 -- magnetometer must be cloned, then triggers compass update
+            Sensor.TYPE_MAGNETIC_FIELD -> {
+                magnetValues = event.values.clone()
+                updateCompass()
+            }
             Sensor.TYPE_STEP_COUNTER -> {
                 handleStepCounter(event.values[0].toInt())
             }
@@ -209,21 +224,23 @@ class MainActivity : ComponentActivity(), SensorEventListener{
         else               -> "W" // 225-314
     }
 
-    private fun setupChart() { // one BarEntry per hour - x=hour index, y = step count
-        val entries = hourlySteps.mapIndexed { index, value -> BarEntry(index.toFloat(), value) }
+    // Builds the three-layer data model (BarEntry -> BarDataSet -> BarData) and configures the chart
+    // Called once when the chart is created, and again every time Refresh Charts is tapped
+    private fun setupChart() {
+        val entries = hourlySteps.mapIndexed { i, v -> BarEntry(i.toFloat(), v) }
         val dataSet = BarDataSet(entries, "Steps").apply {
-            color = Color.BLUE.toArgb()
+            color = Color.CYAN  // built-in constant, already an Int
             valueTextSize = 10f
-        } // configure chart appearance
+        }
         barChart.apply {
             data = BarData(dataSet)
             description.text = "Step Count per Hour"
-            xAxis.position = XAxis.XAxisPosition.BOTTOM // labels below bars
-            xAxis.granularity = 1f                      // one label per bar
-            axisRight.isEnabled = false                 // hide duplicate right Y axis
-            setFitBars(true)             // bars fill full chart width
-            animateY(800)  // bars grow upward over 800ms on load
-            invalidate()                 // force redraw - required after every data change
+            xAxis.position = XAxis.XAxisPosition.BOTTOM  // labels below bars
+            xAxis.granularity = 1f                       // one label per bar
+            axisRight.isEnabled = false                  // hide duplicate right Y axis
+            setFitBars(true)  // bars fill full chart width
+            animateY(800)     // bars grow upward over 800ms on load
+            invalidate()      // force redraw -- required after every data change
         }
     }
 
@@ -248,9 +265,19 @@ class MainActivity : ComponentActivity(), SensorEventListener{
     //   using the stride-length constant. The constant is in metres, so a
     //   conversion is needed. See Hour 1: Health Metric Formulas.
 
-    private fun calculateCalories(steps: Int): Float = 0f
+    private fun calculateCalories(steps: Int): Float {
+        // 0.04 kcal per step -- average for an adult at walking pace
 
-    private fun calculateDistance(steps: Int): Float = 0f
+        return steps * CALORIES_PER_STEP
+
+    }
+
+    private fun calculateDistance(steps: Int): Float {
+        // Multiply steps by stride length in metres, then divide by 1000 to get km
+
+        return (steps * STRIDE_LENGTH_M) / 1000f
+
+    }
 
 
     private fun updateChartWithSteps() {
@@ -263,7 +290,7 @@ class MainActivity : ComponentActivity(), SensorEventListener{
 
         val entries = updatedSteps.mapIndexed { i, v -> BarEntry(i.toFloat(), v) }
         val dataSet = BarDataSet(entries, "Steps").apply {
-            color = android.graphics.Color.CYAN
+            color = Color.CYAN
             valueTextSize = 10f
         }
         barChart.apply {
